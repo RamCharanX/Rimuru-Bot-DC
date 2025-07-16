@@ -7,6 +7,22 @@ const {
   MessageActionRow,
   MessageButton,
 } = require("discord.js");
+const RANK_ROLES = [
+  { level: 5, roleId: "1394582805400518733" },
+  { level: 8, roleId: "1394582805400518734" },
+  { level: 10, roleId: "1394582805400518735" },
+  { level: 15, roleId: "1394582805417299968" },
+  { level: 20, roleId: "1394582805417299969" },
+  { level: 25, roleId: "1394582805417299970" },
+  { level: 35, roleId: "1394582805417299971" },
+  { level: 45, roleId: "1394582805417299972" },
+  { level: 55, roleId: "1394582805417299973" },
+  { level: 65, roleId: "1394582805417299974" },
+  { level: 70, roleId: "1394582805417299975" },
+  { level: 80, roleId: "1394582805417299976" },
+  { level: 90, roleId: "1394582805417299977" },
+  { level: 100, roleId: "1394582805438140546" },
+];
 const { REST } = require("@discordjs/rest");
 const { Routes } = require("discord-api-types/v9");
 const { SlashCommandBuilder } = require("@discordjs/builders");
@@ -98,12 +114,11 @@ const helpPages = {
     .setDescription(
       [
         "`/level` — View your current level and XP",
+        "`/leaderboard` —  Show the top 10 users by level and XP",
+        "`/myrankfix` —  Fixes your current rank",
         "`/addxp` — [Admin] Add XP to a user",
         "`/setlevel` — [Admin] Set a user's level",
         "`/setlevelchannel` — Set the level-up announcement channel",
-        "`/setlevelrole` — Assign role at a certain level",
-        "`/setclearrole` — Set role to remove at a level",
-        "`/clearlevelroles` — Clear all level role settings",
       ].join("\n"),
     ),
 
@@ -163,8 +178,14 @@ const commands = [
     .setName("ping")
     .setDescription("Replies with Pong!"),
   new SlashCommandBuilder()
+  .setName("leaderboard")
+  .setDescription("Show the top 10 users by level and XP"),
+  new SlashCommandBuilder()
     .setName("help")
     .setDescription("Show all available commands"),
+  new SlashCommandBuilder()
+  .setName("myrankfix")
+  .setDescription("Refresh your Tensura rank role based on your level"),
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a user")
@@ -307,33 +328,6 @@ const commands = [
         .setRequired(true),
     ),
   new SlashCommandBuilder()
-    .setName("setlevelrole")
-    .setDescription("Set a role to give when a user reaches a certain level")
-    .addIntegerOption((opt) =>
-      opt
-        .setName("level")
-        .setDescription("Level to give the role at")
-        .setRequired(true),
-    )
-    .addRoleOption((opt) =>
-      opt.setName("role").setDescription("Role to assign").setRequired(true),
-    ),
-  new SlashCommandBuilder()
-    .setName("setclearrole")
-    .setDescription("Set a role to remove when a user reaches a certain level")
-    .addIntegerOption((opt) =>
-      opt
-        .setName("level")
-        .setDescription("Level to remove the role at")
-        .setRequired(true),
-    )
-    .addRoleOption((opt) =>
-      opt.setName("role").setDescription("Role to remove").setRequired(true),
-    ),
-  new SlashCommandBuilder()
-    .setName("clearlevelroles")
-    .setDescription("Clear all level role and removal settings"),
-  new SlashCommandBuilder()
     .setName("addxp")
     .setDescription("Add XP to a user")
     .addUserOption((opt) =>
@@ -461,42 +455,6 @@ client.on("interactionCreate", async (interaction) => {
     const channel = interaction.options.getChannel("channel");
     await db.set(`${interaction.guild.id}_${LEVEL_UP_CHANNEL_KEY}`, channel.id);
     interaction.reply(`✅ Level-up messages will now be sent in ${channel}`);
-  } else if (commandName === "setlevelrole") {
-    if (!interaction.member.permissions.has(Permissions.FLAGS.MANAGE_ROLES)) {
-      return interaction.reply({
-        content: "You do not have permission to set level roles.",
-        ephemeral: true,
-      });
-    }
-    const level = interaction.options.getInteger("level");
-    const role = interaction.options.getRole("role");
-    await db.set(`levelrole.${interaction.guild.id}.${level}`, role.id);
-    interaction.reply(
-      `✅ Users will receive **${role.name}** at level **${level}**.`,
-    );
-  } else if (commandName === "setclearrole") {
-    if (!interaction.member.permissions.has(Permissions.FLAGS.MANAGE_ROLES)) {
-      return interaction.reply({
-        content: "You do not have permission to set role removals.",
-        ephemeral: true,
-      });
-    }
-    const level = interaction.options.getInteger("level");
-    const role = interaction.options.getRole("role");
-    await db.set(`clearrole.${interaction.guild.id}.${level}`, role.id);
-    interaction.reply(
-      `✅ Users will lose **${role.name}** at level **${level}**.`,
-    );
-  } else if (commandName === "clearlevelroles") {
-    if (!interaction.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
-      return interaction.reply({
-        content: "You do not have permission to clear level role settings.",
-        ephemeral: true,
-      });
-    }
-    await db.delete(`levelrole.${interaction.guild.id}`);
-    await db.delete(`clearrole.${interaction.guild.id}`);
-    interaction.reply("🧹 Cleared all level role settings.");
   } else if (commandName === "addxp") {
     if (!interaction.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
       return interaction.reply({
@@ -904,7 +862,66 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.reply(
       `👥 Total members: ${interaction.guild.memberCount}`,
     );
-  } else if (commandName === "meme") {
+  } else if (commandName === "leaderboard") {
+  await interaction.deferReply();
+
+  const guildId = interaction.guild.id;
+  const allKeys = await db.all();
+  const leaderboard = [];
+
+  for (const entry of allKeys) {
+    const key = entry.id;
+
+    if (!key.startsWith(`level.${guildId}-`)) continue;
+
+    const userId = key.split("-")[1];
+    const level = await db.get(key);
+    const xp = await db.get(`xp.${guildId}-${userId}`) || 0;
+
+    const rank = [...RANK_ROLES].reverse().find(r => level >= r.level);
+    const roleName = rank
+      ? interaction.guild.roles.cache.get(rank.roleId)?.name || "Unknown Role"
+      : "None";
+
+    leaderboard.push({ userId, level, xp, roleName });
+  }
+
+  if (leaderboard.length === 0) {
+    return interaction.editReply("No leaderboard data found.");
+  }
+
+  leaderboard.sort((a, b) => {
+    if (b.level === a.level) return b.xp - a.xp;
+    return b.level - a.level;
+  });
+
+  const top = leaderboard.slice(0, 10);
+  const embed = new MessageEmbed()
+    .setTitle("📊 Top 10 Leaderboard — Tempest Federation")
+    .setColor(0x00ae86)
+    .setFooter({ text: "Keep chatting to level up and climb the ranks!" })
+    .setTimestamp();
+
+  for (let i = 0; i < top.length; i++) {
+    const entry = top[i];
+    const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+
+    const userTag = await client.users
+      .fetch(entry.userId)
+      .then(u => u.tag)
+      .catch(() => "Unknown User");
+
+    embed.addField(
+      `${medal} ${userTag}`,
+      `Level: ${entry.level} | XP: ${entry.xp} | Role: **${entry.roleName}**`,
+      false
+    );
+  }
+
+  await interaction.editReply({ embeds: [embed] });
+} 
+  
+  else if (commandName === "meme") {
     try {
       const res = await fetch("https://meme-api.com/gimme");
       const data = await res.json();
@@ -991,7 +1008,58 @@ client.on("interactionCreate", async (interaction) => {
     ];
     const reply = responses[Math.floor(Math.random() * responses.length)];
     await interaction.reply(`🎱 ${reply}`);
-  } else if (commandName === "wholesome") {
+  } else if (commandName === "myrankfix") {
+  const userId = interaction.user.id;
+  const guildId = interaction.guild.id;
+  const key = `${guildId}-${userId}`;
+
+  const level = (await db.get(`level.${key}`)) || 0;
+  const member = interaction.member;
+
+  const rank = [...RANK_ROLES].reverse().find(r => level >= r.level);
+  if (!rank) {
+    return interaction.reply({
+      content: "⚠️ You don’t qualify for any rank role yet. Keep leveling up!",
+      ephemeral: true,
+    });
+  }
+
+  const newRole = interaction.guild.roles.cache.get(rank.roleId);
+  if (!newRole) {
+    return interaction.reply({
+      content: "⚠️ The role for your rank was not found on this server.",
+      ephemeral: true,
+    });
+  }
+
+  const lowerRanks = RANK_ROLES.filter(r => r.roleId !== newRole.id);
+  const rolesToRemove = member.roles.cache.filter(r =>
+    lowerRanks.some(lr => lr.roleId === r.id)
+  );
+
+  try {
+    if (!member.roles.cache.has(newRole.id)) {
+      await member.roles.add(newRole);
+    }
+
+    if (rolesToRemove.size > 0) {
+      await member.roles.remove(rolesToRemove);
+    }
+
+    await interaction.reply({
+      content: `✅ Your rank role has been refreshed! You now have **${newRole.name}**.`,
+      ephemeral: true,
+    });
+  } catch (err) {
+    console.error("Role refresh failed:", err);
+    await interaction.reply({
+      content: "❌ Something went wrong while updating your roles.",
+      ephemeral: true,
+    });
+  }
+}
+  
+  else if (commandName === "wholesome") {
     const messages = [
       "You are amazing! 💖",
       "Never forget you are loved! 💛",
@@ -1274,11 +1342,22 @@ client.on("messageCreate", async (message) => {
     }
 
     // Handle role rewards
-    const rewardRoleId = await db.get(`levelrole.${guildId}.${newLevel}`);
-    if (rewardRoleId) {
-      const role = message.guild.roles.cache.get(rewardRoleId);
-      if (role) {
-        message.member.roles.add(role).catch(console.error);
+    const rank = [...RANK_ROLES].reverse().find(r => newLevel >= r.level);
+    if (rank) {
+      const newRole = message.guild.roles.cache.get(rank.roleId);
+      if (newRole && !message.member.roles.cache.has(newRole.id)) {
+        try {
+          // Remove lower rank roles
+          const lowerRanks = RANK_ROLES.filter(r => r.roleId !== newRole.id);
+          const rolesToRemove = message.member.roles.cache.filter(r =>
+            lowerRanks.some(lr => lr.roleId === r.id)
+          );
+          await message.member.roles.remove(rolesToRemove).catch(console.error);
+          await message.member.roles.add(newRole);
+          console.log(`Assigned ${newRole.name} to ${message.author.tag}`);
+        } catch (err) {
+          console.error("Failed to update rank roles:", err);
+        }
       }
     }
 
