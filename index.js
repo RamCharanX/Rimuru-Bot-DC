@@ -84,6 +84,7 @@ const helpPages = {
         "`/help` — Show this help menu",
         "`/serverinfo` — Info about this server",
         "`/userinfo` — Info about a user",
+        "`/roleinfo` — Displays level-based Tensura roles",
         "`/membercount` — Server member count",
         "`/rules` — Show server rules",
         "`/rulesdm` — DM the rules",
