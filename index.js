@@ -154,6 +154,7 @@ const helpButtons = new MessageActionRow().addComponents(
     .setCustomId("utility")
     .setLabel("🧮 Utility")
     .setStyle("SECONDARY"),
+  
 );
 
 const commands = [
@@ -378,6 +379,9 @@ const commands = [
         .setDescription("Role to remove from autoroles")
         .setRequired(true),
     ),
+  new SlashCommandBuilder()
+  .setName("roleinfo")
+  .setDescription("View all level-based Tensura ranks with lore"),
 ];
 
 // Register to Discord
@@ -797,7 +801,98 @@ client.on("interactionCreate", async (interaction) => {
       embed.addField("📅 Joined Server", member.joinedAt.toDateString(), true);
     }
     await interaction.reply({ embeds: [embed] });
-  } else if (commandName === "avatar") {
+  } else if (commandName === "roleinfo") {
+  const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+
+  const roles = [
+    { name: 'F Rank', level: 5, emoji: '🔵', lore: 'The absolute beginner. Weak and underestimated, yet full of untapped potential.' },
+    { name: 'E Rank', level: 8, emoji: '🟣', lore: 'Stronger than most slimes, E Rankers can take on wild beasts.' },
+    { name: 'D Rank', level: 10, emoji: '🟣', lore: 'Finally recognized as capable adventurers or monsters.' },
+    { name: 'C Rank', level: 15, emoji: '🟪', lore: 'Moderate strength — enough to tame minor threats.' },
+    { name: 'B Rank', level: 20, emoji: '🟥', lore: 'Respected fighters who can lead patrols or monster troops.' },
+    { name: 'A Rank', level: 25, emoji: '🟥', lore: 'Powerful warriors feared on battlefields.' },
+    { name: 'Hazard Class', level: 35, emoji: '🟦', lore: 'Can destroy villages — must be watched by nations.' },
+    { name: 'Special A Rank', level: 45, emoji: '🟥', lore: 'Near-disaster class beings with exceptional skills.' },
+    { name: 'Calamity Class', level: 55, emoji: '🟨', lore: 'Able to wipe armies and cripple nations.' },
+    { name: 'S Rank', level: 65, emoji: '🟨', lore: 'Elite among elites, rivaling demon lord lieutenants.' },
+    { name: 'Disaster Class', level: 70, emoji: '🟥', lore: 'Could flatten cities and mutate lands.' },
+    { name: 'Special S Rank', level: 80, emoji: '🟩', lore: 'Blessed by fate and born for greatness.' },
+    { name: 'Catastrophe Class', level: 90, emoji: '🟧', lore: 'Natural disasters in monster form.' },
+    { name: 'Octagram', level: 100, emoji: '🔴', lore: 'The peak. Legendary Demon Lords like Rimuru, Milim, and Guy Crimson.' },
+  ];
+
+  const key = `${interaction.guild.id}-${interaction.user.id}`;
+  const userLevel = (await db.get(`level.${key}`)) || 0;
+  const userXP = (await db.get(`xp.${key}`)) || 0;
+
+  function getRequiredXP(level) {
+    return 100 + level * 25;
+  }
+
+  const progressBar = (xp, total, size = 10) => {
+    const filled = Math.round((xp / total) * size);
+    const empty = size - filled;
+    return `[${'🟩'.repeat(filled)}${'⬜'.repeat(empty)}]`;
+  };
+
+  function getClosestRoleIndex(level) {
+    let i = 0;
+    while (i + 1 < roles.length && level >= roles[i + 1].level) i++;
+    return i;
+  }
+
+  let page = getClosestRoleIndex(userLevel); // Start on user's current rank
+
+  const getEmbed = (index) => {
+    const r = roles[index];
+    const unlocked = userLevel >= r.level;
+    const nextRole = roles[index + 1];
+    const required = getRequiredXP(userLevel);
+    const xpBar = progressBar(userXP, required);
+    return new MessageEmbed()
+      .setTitle(`${r.emoji} ${r.name}`)
+      .setDescription(`**Level Required:** ${r.level}\n**Status:** ${unlocked ? "✅ Unlocked" : "🔒 Locked"}\n\n${r.lore}`)
+      .addFields(
+        { name: "📊 Your Progress", value: `Level ${userLevel} | XP: ${userXP} / ${required}\n${xpBar}`, inline: false }
+      )
+      .setFooter({ text: `Page ${index + 1} of ${roles.length}` })
+      .setColor(unlocked ? "#2ecc71" : "#e74c3c");
+  };
+
+  const getButtons = () => new MessageActionRow().addComponents(
+    new MessageButton().setCustomId("prev").setLabel("⬅️ Previous").setStyle("SECONDARY"),
+    new MessageButton().setCustomId("myrank").setLabel("🎯 My Rank").setStyle("PRIMARY"),
+    new MessageButton().setCustomId("next").setLabel("Next ➡️").setStyle("SECONDARY"),
+  );
+
+  const msg = await interaction.reply({
+    embeds: [getEmbed(page)],
+    components: [getButtons()],
+    fetchReply: true,
+  });
+
+  const collector = msg.createMessageComponentCollector({
+    time: 90000,
+    filter: (i) => i.user.id === interaction.user.id,
+  });
+
+  collector.on("collect", async (btn) => {
+    if (btn.customId === "prev") page = (page - 1 + roles.length) % roles.length;
+    else if (btn.customId === "next") page = (page + 1) % roles.length;
+    else if (btn.customId === "myrank") page = getClosestRoleIndex(userLevel);
+
+    await btn.update({ embeds: [getEmbed(page)], components: [getButtons()] });
+  });
+
+  collector.on("end", async () => {
+    const disabled = new MessageActionRow().addComponents(
+      getButtons().components.map(b => b.setDisabled(true))
+    );
+    await msg.edit({ components: [disabled] }).catch(() => null);
+  });
+}
+ 
+  else if (commandName === "avatar") {
     const user = interaction.options.getUser("user") || interaction.user;
     const embed = new MessageEmbed()
       .setTitle(`${user.username}'s Avatar`)
